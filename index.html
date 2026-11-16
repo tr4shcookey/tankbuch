@@ -139,6 +139,7 @@ sup.nine { font-size: .55em; vertical-align: .62em; margin-left: 1px }
 .fill .right b { font-variant-numeric: tabular-nums; font-weight: 600 }
 .pill { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: 0 }
 .pill.good { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent) }
+.pill.ok { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent) }
 .pill.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent) }
 .pill.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent) }
 .pill.none { color: var(--muted); background: var(--fill) }
@@ -190,8 +191,21 @@ details.when summary::after { content: "›"; color: var(--muted); transition: t
 details.when[open] summary::after { transform: rotate(90deg) }
 details.when summary > span:first-child { color: var(--accent); font-weight: 600; white-space: nowrap }
 details.when summary .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; text-align: right }
-.v-good { color: var(--good) } .v-warn { color: var(--warn) } .v-bad { color: var(--bad) }
+.v-ok { color: var(--accent) } .v-good { color: var(--good) } .v-warn { color: var(--warn) } .v-bad { color: var(--bad) }
 @media (min-width: 1000px) { .view > .pump.half { align-self: start } }
+
+/* Chart legends: visible at a glance */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 10px }
+.lg { display: inline-flex; align-items: center; gap: 7px; background: var(--fill); border-radius: 999px; padding: 5px 11px 5px 9px; font-size: .8125rem; font-weight: 600; letter-spacing: 0; white-space: nowrap }
+.lg b { font-weight: 700; color: var(--c); font-variant-numeric: tabular-nums }
+.sw { display: inline-block; flex: none; background: var(--c) }
+.sw.line { width: 18px; height: 3px; border-radius: 2px }
+.sw.dash { width: 18px; height: 0; background: none; border-top: 2.5px dashed var(--c) }
+.sw.bar { width: 11px; height: 11px; border-radius: 3px }
+.sw.dot { width: 9px; height: 9px; border-radius: 50% }
+.sw.diamond { width: 9px; height: 9px; transform: rotate(45deg); border-radius: 1px }
+.lg.scale { gap: 10px; background: transparent; padding-left: 2px }
+.lg.scale span { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; color: var(--muted) }
 
 /* Fuel prices */
 .station { position: relative; display: grid; grid-template-columns: 92px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 12px 16px }
@@ -376,7 +390,9 @@ function periodStats(entries) {
   const pl = entries.filter(e => e.preisProLiter != null && e.liter != null), plL = pl.reduce((a, e) => a + e.liter, 0);
   return { n: entries.length, cost, liters, km, verbrauch: km ? segL / km * 100 : null, preis: plL ? pl.reduce((a, e) => a + e.preisProLiter * e.liter, 0) / plL : null };
 }
-const pillClass = (v, avg) => v == null || avg == null ? "none" : v <= avg * 1.05 ? "good" : v <= avg * 1.15 ? "warn" : "bad";
+const pillClass = (v, avg) => v == null || avg == null ? "none" : v < avg ? "good" : v <= avg * 1.05 ? "ok" : v <= avg * 1.15 ? "warn" : "bad";
+const CLASS_VAR = { good: "--good", ok: "--accent", warn: "--warn", bad: "--bad", none: "--muted" };
+const CLASS_TXT = { good: "unter Ø", ok: "bis +5 %", warn: "bis +15 %", bad: "darüber" };
 
 // ---------- spring (Apple-style: damping ratio + response), interruptible ----------
 function makeSpring(apply) {
@@ -405,9 +421,11 @@ const rubberband = (o, dim, c = 0.55) => (o * dim * c) / (dim + c * Math.abs(o))
 // ---------- charts ----------
 const charts = [];
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-function killCharts() { while (charts.length) charts.pop().destroy(); }
+const chartObserver = "IntersectionObserver" in window ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { chartObserver.unobserve(e.target); const f = e.target._make; e.target._make = null; f && f(); } }), { threshold: 0.25 }) : null;
+function killCharts() { while (charts.length) charts.pop().destroy(); chartObserver && chartObserver.disconnect(); }
 function chart(canvas, cfg) {
   if (!canvas) return;
+  if (chartObserver && !reduced && !canvas._now) { canvas._make = () => { canvas._now = true; chart(canvas, cfg); }; chartObserver.observe(canvas); return; }
   if (!window.Chart) { canvas.parentElement.innerHTML = '<p class="empty">Diagramme brauchen eine Internetverbindung.</p>'; return; }
   Chart.defaults.font.family = css("--f-text"); Chart.defaults.font.size = 12; Chart.defaults.color = css("--muted");
   const merge = (a, b) => { for (const k in b) { if (b[k] && typeof b[k] === "object" && !Array.isArray(b[k]) && a[k] && typeof a[k] === "object") merge(a[k], b[k]); else a[k] = b[k]; } return a; };
@@ -418,6 +436,19 @@ function chart(canvas, cfg) {
   charts.push(new Chart(canvas, cfg));
 }
 const toRgba = (c, a) => { const m = c.match(/^#([0-9a-f]{6})$/i); if (!m) return c; const n = parseInt(m[1], 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+const ax = (text, color) => ({ display: true, text, color: color || css("--muted"), font: { size: 11, weight: "600" }, padding: { top: 6, bottom: 2 } });
+const legend = items => `<div class="legend">${items.map(i => i.scale
+  ? `<span class="lg scale">${i.scale.map(k => `<span><i class="sw dot" style="--c:var(${CLASS_VAR[k]})"></i>${CLASS_TXT[k]}</span>`).join("")}</span>`
+  : `<span class="lg" style="--c:var(${i.c})"><i class="sw ${i.t}"></i>${i.label}${i.v ? ` <b>${i.v}</b>` : ""}</span>`).join("")}</div>`;
+// numbers count up when they scroll into view
+const cnt = (v, d) => v == null || !isFinite(v) ? "–" : `<span class="cnt" data-n="${v}" data-d="${d}">${fmt(v, d)}</span>`;
+const countObserver = "IntersectionObserver" in window ? new IntersectionObserver(es => es.forEach(e => {
+  if (!e.isIntersecting) return; countObserver.unobserve(e.target);
+  const el = e.target, to = +el.dataset.n, d = +el.dataset.d, t0 = performance.now(), dur = 1100;
+  const step = t => { const p = Math.min(1, (t - t0) / dur); el.textContent = fmt(to * (1 - Math.pow(1 - p, 4)), d); if (p < 1) requestAnimationFrame(step); };
+  el.textContent = fmt(0, d); requestAnimationFrame(step);
+}), { threshold: 0.6 }) : null;
+function armCounters() { if (!countObserver || reduced) return; document.querySelectorAll(".cnt").forEach(el => countObserver.observe(el)); }
 const area = (canvas, color) => { const g = canvas.getContext("2d").createLinearGradient(0, 0, 0, 240); g.addColorStop(0, toRgba(color, .32)); g.addColorStop(1, toRgba(color, 0)); return g; };
 
 // ---------- navigation ----------
@@ -440,6 +471,7 @@ function render() {
   app.innerHTML = `<div class="large-title" id="largeTitle"><h1>${NAMES[view]}</h1></div><section class="view">${V[0](R)}</section>`;
   titleObserver.disconnect(); titleObserver.observe($("#largeTitle"));
   V[1](R);
+  armCounters();
 }
 const titleObserver = new IntersectionObserver(([e]) => $("#navbar").classList.toggle("scrolled", !e.isIntersecting), { rootMargin: "-60px 0px 0px 0px" });
 
@@ -465,22 +497,25 @@ function vUebersicht(R) {
   <div class="card half quick"><div class="quick-head"><h2>Tanken</h2></div><div id="quickForm"></div></div>
   <div class="half stack">
   <div class="pump" role="group" aria-label="Durchschnittsverbrauch">
-    <div><div class="lbl">Ø Verbrauch · ${esc(car().name)}</div><span class="big" id="countUp" data-to="${R.avg ?? ""}">${fmt(R.avg, 2)}</span><span class="unit">l/100 km</span></div>
+    <div><div class="lbl">Ø Verbrauch · ${esc(car().name)}</div><span class="big">${cnt(R.avg, 2)}</span><span class="unit">l/100 km</span></div>
     <div class="mini">
-      <div><span class="lbl">Strecke km</span><b>${fmt(R.sumKm, 0)}</b></div>
-      <div><span class="lbl">€ / 100 km</span><b>${fmt(R.costPer100, 2)}</b></div>
-      <div><span class="lbl">km-Stand</span><b>${fmt(lastKm?.kmStand ?? null, 0)}</b></div>
+      <div><span class="lbl">Strecke km</span><b>${cnt(R.sumKm, 0)}</b></div>
+      <div><span class="lbl">€ / 100 km</span><b>${cnt(R.costPer100, 2)}</b></div>
+      <div><span class="lbl">km-Stand</span><b>${cnt(lastKm?.kmStand ?? null, 0)}</b></div>
     </div>
   </div>
   <div class="kpis">
-    <div class="kpi"><span class="label">Kosten ${year}</span><b>${eur(ys.cost)}</b><small>${ys.n} Tankvorgänge</small></div>
-    <div class="kpi"><span class="label">Verbrauch ${year}</span><b>${fmt(ys.verbrauch, 2)}</b><small>l/100 km</small></div>
+    <div class="kpi"><span class="label">Kosten ${year}</span><b>${cnt(ys.cost, 2)} €</b><small>${ys.n} Tankvorgänge</small></div>
+    <div class="kpi"><span class="label">Verbrauch ${year}</span><b>${cnt(ys.verbrauch, 2)}</b><small>l/100 km</small></div>
     <div class="kpi"><span class="label">Letzter Literpreis</span><b>${ppl(lastP?.preisProLiter)} €</b><small class="${dP > 0 ? "delta-up" : dP < 0 ? "delta-down" : ""}">${dP == null ? "&nbsp;" : (dP > 0 ? "▲ +" : dP < 0 ? "▼ " : "± ") + fmt(dP * 100, 1) + " ct zum Mal davor"}</small></div>
-    <div class="kpi"><span class="label">Gefahren ${year}</span><b>${fmt(ys.km, 0)} km</b><small>${fmt(ys.liters, 1)} Liter getankt</small></div>
+    <div class="kpi"><span class="label">Gefahren ${year}</span><b>${cnt(ys.km, 0)} km</b><small>${fmt(ys.liters, 1)} Liter getankt</small></div>
   </div>
   </div>
-  <div class="card half"><h2>Verbrauch je Tankfüllung</h2><p class="sub">Letzte 30 volle Tankfüllungen. Gestrichelt: dein Durchschnitt.</p><div class="chart-box"><canvas id="cV" aria-label="Verbrauch je Tankfüllung"></canvas></div></div>
-  <div class="card half"><h2>Literpreis</h2><p class="sub">Was du an der Zapfsäule bezahlt hast, in € pro Liter.</p><div class="chart-box"><canvas id="cP" aria-label="Literpreis"></canvas></div></div>
+  <div class="card half"><h2>Verbrauch je Tankfüllung</h2><p class="sub">Deine letzten 30 vollen Tankfüllungen</p>
+    ${legend([{ t: "line", c: "--accent", label: "Verbrauch" }, { t: "dash", c: "--amber", label: "Durchschnitt", v: fmt(R.avg, 2) + " l" }, { scale: ["good", "ok", "warn", "bad"] }])}<div class="chart-box"><canvas id="cV" aria-label="Verbrauch je Tankfüllung"></canvas></div></div>
+  <div class="card half"><h2>Literpreis</h2><p class="sub">Was du an der Zapfsäule bezahlt hast</p>
+    ${(() => { const pts = list.filter(e => e.preisProLiter != null && e.datum).slice(-40); const lo = pts.length ? Math.min(...pts.map(e => e.preisProLiter)) : null, hi = pts.length ? Math.max(...pts.map(e => e.preisProLiter)) : null, m = pts.length ? pts.reduce((a, e) => a + e.preisProLiter, 0) / pts.length : null;
+      return legend([{ t: "line", c: "--amber", label: "Literpreis" }, { t: "dash", c: "--accent", label: "Durchschnitt", v: fmt(m, 3) + " €" }, { t: "dot", c: "--good", label: "Tiefst", v: fmt(lo, 3) + " €" }, { t: "dot", c: "--bad", label: "Höchst", v: fmt(hi, 3) + " €" }]); })()}<div class="chart-box"><canvas id="cP" aria-label="Literpreis"></canvas></div></div>
   ${backupBanner()}
   <div class="section"><div class="section-head"><h2 class="section-title">Zuletzt getankt</h2><button class="link" data-go="verlauf">Alle</button></div>
     <div class="list">${list.slice(-3).reverse().map(e => fillRow(e, R.avg)).join("")}</div></div>`;
@@ -488,22 +523,24 @@ function vUebersicht(R) {
 function aUebersicht(R) {
   formInto($("#quickForm"), "q", null);
   if (!R.list.length) return;
-  const el = $("#countUp");
-  if (el && el.dataset.to && !reduced) {
-    const to = +el.dataset.to, t0 = performance.now();
-    const step = t => { const p = Math.min(1, (t - t0) / 900); el.textContent = fmt(to * (1 - Math.pow(1 - p, 3)), 2); if (p < 1) requestAnimationFrame(step); };
-    requestAnimationFrame(step);
-  }
-  const acc = css("--accent"), am = css("--amber");
+  const acc = css("--accent"), am = css("--amber"), mu = css("--muted");
   const seg = R.seg.slice(-30), cv = $("#cV");
+  const ptCol = seg.map(e => css(CLASS_VAR[pillClass(e._v, R.avg)]));
   chart(cv, { type: "line", data: { labels: seg.map(e => dateLabel(e.datum)), datasets: [
-    { data: seg.map(e => +e._v.toFixed(2)), borderColor: acc, backgroundColor: cv && area(cv, acc), fill: true, cubicInterpolationMode: "monotone", pointRadius: 2.5, pointHoverRadius: 5, pointBackgroundColor: acc, borderWidth: 2 },
-    { data: seg.map(() => R.avg && +R.avg.toFixed(2)), borderColor: am, borderDash: [5, 5], pointRadius: 0, borderWidth: 1.5, fill: false } ] },
-    options: { plugins: { tooltip: { callbacks: { label: c => (c.datasetIndex ? "Ø " : "") + fmt(c.parsed.y, 2) + " l/100 km" } } }, scales: { y: { ticks: { callback: v => fmt(v, 1) } } } } });
+    { label: "Verbrauch", data: seg.map(e => +e._v.toFixed(2)), borderColor: acc, backgroundColor: cv && area(cv, acc), fill: true, cubicInterpolationMode: "monotone", pointRadius: 4, pointHoverRadius: 6, pointBackgroundColor: ptCol, pointBorderColor: css("--surface"), pointBorderWidth: 1.5, borderWidth: 2 },
+    { label: "Durchschnitt", data: seg.map(() => R.avg && +R.avg.toFixed(2)), borderColor: am, borderDash: [6, 5], pointRadius: 0, borderWidth: 2, fill: false } ] },
+    options: { plugins: { tooltip: { callbacks: { label: c => c.datasetIndex ? "Durchschnitt: " + fmt(c.parsed.y, 2) + " l/100 km" : "Verbrauch: " + fmt(c.parsed.y, 2) + " l/100 km (" + CLASS_TXT[pillClass(c.parsed.y, R.avg)] + ")" } } },
+      scales: { x: { title: ax("Tankdatum") }, y: { title: ax("Verbrauch in l/100 km", acc), ticks: { callback: v => fmt(v, 1) } } } } });
   const pts = R.list.filter(e => e.preisProLiter != null && e.datum).slice(-40), cp = $("#cP");
+  const mean = pts.length ? pts.reduce((a, e) => a + e.preisProLiter, 0) / pts.length : null;
+  const lo = Math.min(...pts.map(e => e.preisProLiter)), hi = Math.max(...pts.map(e => e.preisProLiter));
   chart(cp, { type: "line", data: { labels: pts.map(e => dateLabel(e.datum)), datasets: [
-    { data: pts.map(e => e.preisProLiter), borderColor: am, backgroundColor: cp && area(cp, am), fill: true, cubicInterpolationMode: "monotone", pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: am, borderWidth: 2 } ] },
-    options: { plugins: { tooltip: { callbacks: { label: c => fmt(c.parsed.y, 3) + " €/l" } } }, scales: { y: { ticks: { callback: v => fmt(v, 2) + " €" } } } } });
+    { label: "Literpreis", data: pts.map(e => e.preisProLiter), borderColor: am, backgroundColor: cp && area(cp, am), fill: true, cubicInterpolationMode: "monotone", borderWidth: 2,
+      pointRadius: pts.map(e => e.preisProLiter === lo || e.preisProLiter === hi ? 5 : 2), pointHoverRadius: 6,
+      pointBackgroundColor: pts.map(e => e.preisProLiter === lo ? css("--good") : e.preisProLiter === hi ? css("--bad") : am) },
+    { label: "Durchschnitt", data: pts.map(() => mean), borderColor: acc, borderDash: [6, 5], pointRadius: 0, borderWidth: 2, fill: false } ] },
+    options: { plugins: { tooltip: { callbacks: { label: c => (c.datasetIndex ? "Durchschnitt: " : "Literpreis: ") + fmt(c.parsed.y, 3) + " €/l" } } },
+      scales: { x: { title: ax("Tankdatum") }, y: { title: ax("Preis in € pro Liter", am), ticks: { callback: v => fmt(v, 2) } } } } });
 }
 function fillRow(e, avg) {
   const d = e.datum;
@@ -518,7 +555,8 @@ function vVerlauf(R) {
   if (!R.list.length) return `<div class="card empty">Noch keine Einträge.</div>`;
   const groups = [];
   for (const e of R.list.slice().reverse()) { const k = e.datum ? e.datum.slice(0, 7) : ""; if (!groups.length || groups.at(-1).k !== k) groups.push({ k, items: [] }); groups.at(-1).items.push(e); }
-  return `<p class="footnote">Tippe auf einen Eintrag, um ihn zu bearbeiten. Verbrauch: <span class="pill good">bis 5 %</span> <span class="pill warn">bis 15 %</span> <span class="pill bad">mehr</span> über deinem Durchschnitt.</p>` +
+  return `<p class="footnote">Tippe auf einen Eintrag, um ihn zu bearbeiten. Farbe des Verbrauchs im Vergleich zu deinem Durchschnitt (${fmt(R.avg, 2)} l/100 km):</p>
+    <p class="footnote" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:-12px"><span class="pill good">unter Ø</span><span class="pill ok">bis +5 %</span><span class="pill warn">bis +15 %</span><span class="pill bad">darüber</span></p>` +
     groups.map(g => `<div class="section"><div class="section-head"><h3 class="section-title" style="font-size:1.0625rem">${monthLabel(g.k)}</h3><span class="muted num" style="font-size:.9375rem">${eur(g.items.reduce((a, e) => a + (e.gesamtpreis || 0), 0))}</span></div>
     <div class="list">${g.items.map(e => fillRow(e, R.avg)).join("")}</div></div>`).join("");
 }
@@ -541,13 +579,15 @@ function vStatistik(R) {
   return `<div class="toolbar"><div class="seg" role="tablist" aria-label="Zeitraum"><span class="thumb" id="segThumb"></span><button role="tab" data-mode="monat" aria-selected="${statMode === "monat"}">Monate</button><button role="tab" data-mode="jahr" aria-selected="${statMode === "jahr"}">Jahre</button></div>
     ${statMode === "monat" ? `<select class="picker" id="yearSel" aria-label="Jahr wählen">${years.map(y => `<option${y === statYear ? " selected" : ""}>${y}</option>`).join("")}</select>` : ""}</div>
   <div class="kpis">
-    <div class="kpi"><span class="label">Kosten</span><b>${eur(tot.cost)}</b><small>${tot.n} Tankvorgänge</small></div>
-    <div class="kpi"><span class="label">Ø Verbrauch</span><b>${fmt(tot.verbrauch, 2)}</b><small>l/100 km</small></div>
+    <div class="kpi"><span class="label">Kosten</span><b>${cnt(tot.cost, 2)} €</b><small>${tot.n} Tankvorgänge</small></div>
+    <div class="kpi"><span class="label">Ø Verbrauch</span><b>${cnt(tot.verbrauch, 2)}</b><small>l/100 km</small></div>
     <div class="kpi"><span class="label">Ø Literpreis</span><b>${ppl(tot.preis)} €</b><small>nach Litern gewichtet</small></div>
-    <div class="kpi"><span class="label">Strecke</span><b>${fmt(tot.km, 0)} km</b><small>${fmt(tot.liters, 1)} l getankt</small></div>
+    <div class="kpi"><span class="label">Strecke</span><b>${cnt(tot.km, 0)} km</b><small>${fmt(tot.liters, 1)} l getankt</small></div>
   </div>
-  <div class="card half"><h2>Kosten</h2><p class="sub">${statMode === "monat" ? "Pro Monat in " + statYear : "Pro Jahr"}</p><div class="chart-box"><canvas id="sC" aria-label="Kosten"></canvas></div></div>
-  <div class="card half"><h2>Verbrauch und Literpreis</h2><p class="sub">Linie: Ø Verbrauch (links). Rauten: Ø Literpreis (rechts).</p><div class="chart-box"><canvas id="sV" aria-label="Verbrauch und Literpreis"></canvas></div></div>
+  <div class="card half"><h2>Kosten</h2><p class="sub">${statMode === "monat" ? "Pro Monat in " + statYear : "Pro Jahr"}</p>
+    ${legend([{ t: "bar", c: "--accent", label: statMode === "monat" ? "Tankkosten je Monat" : "Tankkosten je Jahr" }, { t: "dash", c: "--amber", label: "Durchschnitt", v: eur(filled.length ? tot.cost / filled.length : null) }])}<div class="chart-box"><canvas id="sC" aria-label="Kosten"></canvas></div></div>
+  <div class="card half"><h2>Verbrauch und Literpreis</h2><p class="sub">${statMode === "monat" ? "Monatswerte " + statYear : "Jahreswerte"}</p>
+    ${legend([{ t: "line", c: "--accent", label: "Ø Verbrauch", v: fmt(tot.verbrauch, 2) + " l" }, { t: "diamond", c: "--amber", label: "Ø Literpreis", v: fmt(tot.preis, 3) + " €" }])}<div class="chart-box"><canvas id="sV" aria-label="Verbrauch und Literpreis"></canvas></div></div>
   <div class="card"><h2>Tabelle</h2>
     <div class="table-wrap"><table class="stats"><thead><tr><th>${statMode === "monat" ? "Monat" : "Jahr"}</th><th>Tanken</th><th>Liter</th><th>Kosten</th><th>km</th><th>l/100 km</th><th>Ø €/l</th></tr></thead>
     <tbody>${filled.map(r => `<tr><td>${r.label}</td><td>${r.s.n}</td><td>${fmt(r.s.liters, 1)}</td><td>${eur(r.s.cost)}</td><td>${r.s.km ? fmt(r.s.km, 0) : "–"}</td><td>${fmt(r.s.verbrauch, 2)}</td><td>${fmt(r.s.preis, 3)}</td></tr>`).join("")}
@@ -572,13 +612,19 @@ function aStatistik(R) {
   const ys = $("#yearSel"); if (ys) ys.onchange = () => { statYear = ys.value; render(); };
   const { rows } = statRows(R);
   const acc = css("--accent"), am = css("--amber");
-  chart($("#sC"), { type: "bar", data: { labels: rows.map(r => r.label), datasets: [{ data: rows.map(r => +r.s.cost.toFixed(2)), backgroundColor: acc, borderRadius: 6, borderSkipped: false, maxBarThickness: 34 }] },
-    options: { plugins: { tooltip: { callbacks: { label: c => eur(c.parsed.y) } } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmt(v, 0) + " €" } } } } });
+  const filled = rows.filter(r => r.s.n), avgCost = filled.length ? filled.reduce((a, r) => a + r.s.cost, 0) / filled.length : null;
+  const unitX = statMode === "monat" ? "Monat " + statYear : "Jahr";
+  chart($("#sC"), { type: "bar", data: { labels: rows.map(r => r.label), datasets: [
+    { label: "Kosten", data: rows.map(r => +r.s.cost.toFixed(2)), backgroundColor: acc, borderRadius: 6, borderSkipped: false, maxBarThickness: 34, order: 2 },
+    { type: "line", label: "Durchschnitt", data: rows.map(() => avgCost), borderColor: am, borderDash: [6, 5], borderWidth: 2, pointRadius: 0, order: 1 } ] },
+    options: { plugins: { tooltip: { callbacks: { label: c => (c.datasetIndex ? "Durchschnitt: " : "Kosten: ") + eur(c.parsed.y) } } },
+      scales: { x: { title: ax(unitX) }, y: { beginAtZero: true, title: ax("Kosten in €", acc), ticks: { callback: v => fmt(v, 0) } } } } });
   chart($("#sV"), { type: "line", data: { labels: rows.map(r => r.label), datasets: [
-    { label: "Verbrauch", data: rows.map(r => r.s.verbrauch ? +r.s.verbrauch.toFixed(2) : null), borderColor: acc, backgroundColor: acc, cubicInterpolationMode: "monotone", spanGaps: true, pointRadius: 3.5, borderWidth: 2, yAxisID: "y" },
-    { label: "Literpreis", data: rows.map(r => r.s.preis ? +r.s.preis.toFixed(3) : null), borderColor: am, backgroundColor: am, showLine: false, pointRadius: 5, pointStyle: "rectRot", yAxisID: "y1" } ] },
-    options: { plugins: { tooltip: { callbacks: { label: c => c.datasetIndex ? "Ø " + fmt(c.parsed.y, 3) + " €/l" : "Ø " + fmt(c.parsed.y, 2) + " l/100 km" } } },
-      scales: { y: { position: "left", ticks: { callback: v => fmt(v, 1) } }, y1: { position: "right", grid: { display: false }, border: { display: false }, ticks: { callback: v => fmt(v, 2) + " €" } } } } });
+    { label: "Ø Verbrauch", data: rows.map(r => r.s.verbrauch ? +r.s.verbrauch.toFixed(2) : null), borderColor: acc, backgroundColor: acc, cubicInterpolationMode: "monotone", spanGaps: true, pointRadius: 4, borderWidth: 2.5, yAxisID: "y" },
+    { label: "Ø Literpreis", data: rows.map(r => r.s.preis ? +r.s.preis.toFixed(3) : null), borderColor: am, backgroundColor: am, showLine: false, pointRadius: 6, pointHoverRadius: 8, pointStyle: "rectRot", yAxisID: "y1" } ] },
+    options: { plugins: { tooltip: { callbacks: { label: c => c.datasetIndex ? "Ø Literpreis: " + fmt(c.parsed.y, 3) + " €/l" : "Ø Verbrauch: " + fmt(c.parsed.y, 2) + " l/100 km" } } },
+      scales: { x: { title: ax(unitX) }, y: { position: "left", title: ax("Verbrauch in l/100 km", acc), ticks: { color: acc, callback: v => fmt(v, 1) } },
+        y1: { position: "right", grid: { display: false }, border: { display: false }, title: ax("Preis in €/l", am), ticks: { color: am, callback: v => fmt(v, 2) } } } } });
 }
 function vMehr() {
   const last = S.letzteSicherung ? new Date(S.letzteSicherung).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" }) : "noch nie";
