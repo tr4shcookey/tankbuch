@@ -373,7 +373,21 @@ function fromSeed() {
 let HAS_SEED = false;
 try { HAS_SEED = JSON.parse($("#seed").textContent).tankvorgaenge.length > 0; } catch {}
 const STANDALONE = !window.claude;
-if (STANDALONE && "serviceWorker" in navigator && location.protocol === "https:") { navigator.serviceWorker.register("sw.js").catch(() => {}); }
+if (STANDALONE && "serviceWorker" in navigator && location.protocol === "https:") {
+  // updates: check on start and whenever the app comes back to the foreground; a new version reloads the page
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
+    reg.update().catch(() => {});
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+  }).catch(() => {});
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloading) return;
+    const typing = [...document.querySelectorAll("#q-entry input:not([type=checkbox])")].some(i => i.value) || !document.getElementById("sheet").hidden;
+    if (typing) { setTimeout(() => toast("Neue Version geladen. Sie gilt beim nächsten Öffnen."), 600); return; }
+    reloading = true; location.reload();
+  });
+}
 function load() {
   try { const raw = localStorage.getItem(KEY); if (raw) { const s = JSON.parse(raw); if (s && Array.isArray(s.eintraege)) return s; } } catch {}
   return fromSeed();
@@ -552,11 +566,13 @@ addEventListener("scroll", () => {
   }
   // a fling that runs into the top or bottom bounces off softly
   if (!touching && lastInput === "touch" && Math.abs(vel) > 0.4 && ((atTop() && vel < 0) || (atBottom() && vel > 0))) {
-    bounce.to(0, { damping: 0.82, response: 0.42, velocity: Math.max(-900, Math.min(900, -vel * 240)) }); vel = 0;
+    edgeKick(-vel * 240); vel = 0;
   }
 }, { passive: true });
 // pulling past the edge with a finger: rubber band, spring back on release
 let tStart = null, pull = 0;
+const SPRING_EDGE = { damping: 0.55, response: 0.3 };   // short, firm spring: one small rebound, then rest
+const edgeKick = v => { if (Math.abs(bounce.x) > 1) return; bounce.to(0, { ...SPRING_EDGE, velocity: Math.max(-700, Math.min(700, v)) }); };
 addEventListener("touchstart", e => { touching = true; lastInput = "touch"; tStart = e.touches[0].clientY; pull = 0; }, { passive: true });
 addEventListener("touchmove", e => {
   if (!MOTION || sheetIsOpen() || tStart == null) return;
@@ -565,21 +581,21 @@ addEventListener("touchmove", e => {
     pull += d;
     if ((atTop() && pull < 0) || (atBottom() && !atTop() && pull > 0)) { pull = 0; bounce.set(0); return; }
     if (e.cancelable) e.preventDefault();
-    bounce.set(rubberband(pull, innerHeight, 0.45));
+    bounce.set(rubberband(pull, 70, 0.5));   // hard stop: never more than ~50 px
   }
 }, { passive: false });
-const release = () => { touching = false; tStart = null; if (pull) { pull = 0; bounce.to(0, { damping: 0.8, response: 0.45 }); } };
+const release = () => { touching = false; tStart = null; if (pull) { pull = 0; bounce.to(0, SPRING_EDGE); } };
 addEventListener("touchend", release, { passive: true }); addEventListener("touchcancel", release, { passive: true });
 // trackpad / mouse wheel at the edge
-let wheelPull = 0, wheelTimer = 0;
+let wheelLock = false, wheelTimer = 0;
 addEventListener("wheel", e => {
   lastInput = "wheel";
   if (!MOTION || sheetIsOpen() || e.ctrlKey) return;
   const d = -e.deltaY * (e.deltaMode === 1 ? 16 : 1);
   if ((atTop() && d > 0) || (atBottom() && d < 0)) {
-    wheelPull += d; bounce.set(rubberband(wheelPull, innerHeight, 0.18));
-    clearTimeout(wheelTimer);
-    wheelTimer = setTimeout(() => { wheelPull = 0; bounce.to(0, { damping: 0.78, response: 0.45 }); }, 90);
+    // one short spring kick per gesture; the rest of the trackpad momentum is ignored, so the end feels like an end
+    if (!wheelLock) { wheelLock = true; edgeKick(Math.sign(d) * Math.min(700, 250 + Math.abs(d) * 6)); }
+    clearTimeout(wheelTimer); wheelTimer = setTimeout(() => { wheelLock = false; }, 220);
   }
 }, { passive: true });
 
