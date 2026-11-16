@@ -294,6 +294,11 @@ div.fill { cursor: default }
 .steps code { background: var(--fill); border-radius: 6px; padding: 1px 5px; font-size: .875rem }
 .empty { text-align: center; color: var(--muted); padding: 28px 12px }
 
+/* Motion: rubber-band bounce at the page edges, tiles that trail the scroll slightly, staggered reveal */
+html.motion, html.motion body { overscroll-behavior-y: none }
+html.motion #app { will-change: transform }
+html.motion .view > .rv { opacity: 0; translate: 0 14px; scale: .99 }
+html.motion .view > .rv.in { opacity: 1; translate: 0 0; scale: 1; transition: opacity .35s ease var(--d, 0ms), translate .5s cubic-bezier(.2,.9,.25,1.06) var(--d, 0ms), scale .5s cubic-bezier(.2,.9,.25,1) var(--d, 0ms) }
 @media (prefers-reduced-motion: reduce) { .view, .toast { animation: fadein .2s ease both !important } .seg .thumb, .switch::after { transition-duration: .01s } }
 @media (prefers-reduced-transparency: reduce) { .navbar.scrolled, .tabbar, .toast { background: var(--bar-solid); -webkit-backdrop-filter: none; backdrop-filter: none } }
 @media (prefers-contrast: more) { .card, .kpi, .list, .group { box-shadow: 0 0 0 1px var(--sep) } }
@@ -479,7 +484,7 @@ const NAMES = { uebersicht: "Tankbuch", preise: "Spritpreise", verlauf: "Verlauf
 const car = () => S.fahrzeuge.find(f => f.id === S.aktiv) || S.fahrzeuge[0];
 
 function go(v) {
-  view = v;
+  view = v; revealNext = true;
   document.querySelectorAll(".tabbar button[data-view]").forEach(b => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   window.scrollTo(0, 0); render();
 }
@@ -493,8 +498,90 @@ function render() {
   titleObserver.disconnect(); titleObserver.observe($("#largeTitle"));
   V[1](R);
   armCounters();
+  armMotion();
 }
 const titleObserver = new IntersectionObserver(([e]) => $("#navbar").classList.toggle("scrolled", !e.isIntersecting), { rootMargin: "-60px 0px 0px 0px" });
+
+// ---------- motion: edge bounce, trailing tiles, staggered reveal ----------
+let revealNext = true;
+const MOTION = !reduced;
+if (MOTION) document.documentElement.classList.add("motion");
+const appEl = document.getElementById("app");
+const bounce = makeSpring(y => { appEl.style.transform = Math.abs(y) < 0.1 ? "" : `translateY(${y}px)`; });
+const maxScroll = () => Math.max(0, document.documentElement.scrollHeight - innerHeight);
+const atTop = () => scrollY <= 0, atBottom = () => scrollY >= maxScroll() - 1;
+const sheetIsOpen = () => !$("#sheet").hidden;
+// tiles reveal with a short stagger when they first scroll into view
+const revealObs = MOTION && "IntersectionObserver" in window ? new IntersectionObserver(es => {
+  es.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top || a.boundingClientRect.left - b.boundingClientRect.left)
+    .forEach((e, i) => { e.target.style.setProperty("--d", Math.min(i * 45, 220) + "ms"); e.target.classList.add("in"); revealObs.unobserve(e.target); });
+}, { rootMargin: "0px 0px -4% 0px", threshold: 0.04 }) : null;
+let tiles = [];
+function armMotion() {
+  tiles = [...document.querySelectorAll(".view > *")].map(el => ({ el, x: 0, v: 0 }));
+  if (!revealObs) return;
+  revealObs.disconnect();
+  if (revealNext) tiles.forEach(t => { t.el.classList.add("rv"); revealObs.observe(t.el); });
+  revealNext = false;
+}
+// tiles trail the scroll a little, lower tiles more (like messages in iMessage), then settle with a spring
+let lastY = scrollY, lastT = performance.now(), vel = 0, lagRaf = 0, touching = false, lastInput = "wheel";
+function lagStep() {
+  const k = Math.pow(2 * Math.PI / 0.3, 2), c = 4 * Math.PI * 1 / 0.3, h = 1 / 60;
+  let moving = false;
+  for (const t of tiles) {
+    if (!t.x && !t.v) continue;
+    const a = -k * t.x - c * t.v; t.v += a * h; t.x += t.v * h;
+    if (Math.abs(t.x) < 0.05 && Math.abs(t.v) < 0.5) { t.x = 0; t.v = 0; t.el.style.transform = ""; continue; }
+    t.el.style.transform = `translateY(${t.x.toFixed(2)}px)`; moving = true;
+  }
+  lagRaf = moving ? requestAnimationFrame(lagStep) : 0;
+}
+addEventListener("scroll", () => {
+  const now = performance.now(), y = scrollY, dy = y - lastY, dt = Math.max(1, now - lastT);
+  vel = vel * 0.6 + (dy / dt) * 0.4; lastY = y; lastT = now;
+  if (!MOTION || sheetIsOpen()) return;
+  if (dy) {
+    const H = innerHeight;
+    for (const t of tiles) {
+      const r = t.el.getBoundingClientRect(); if (r.bottom < 0 || r.top > H) continue;
+      const pos = Math.min(1, Math.max(0, (r.top + r.height / 2) / H)), lead = dy > 0 ? pos : 1 - pos;
+      t.x = Math.max(-7, Math.min(7, t.x + dy * (0.015 + 0.045 * lead)));
+    }
+    if (!lagRaf) lagRaf = requestAnimationFrame(lagStep);
+  }
+  // a fling that runs into the top or bottom bounces off softly
+  if (!touching && lastInput === "touch" && Math.abs(vel) > 0.4 && ((atTop() && vel < 0) || (atBottom() && vel > 0))) {
+    bounce.to(0, { damping: 0.82, response: 0.42, velocity: Math.max(-900, Math.min(900, -vel * 240)) }); vel = 0;
+  }
+}, { passive: true });
+// pulling past the edge with a finger: rubber band, spring back on release
+let tStart = null, pull = 0;
+addEventListener("touchstart", e => { touching = true; lastInput = "touch"; tStart = e.touches[0].clientY; pull = 0; }, { passive: true });
+addEventListener("touchmove", e => {
+  if (!MOTION || sheetIsOpen() || tStart == null) return;
+  const y = e.touches[0].clientY, d = y - tStart; tStart = y;
+  if ((atTop() && (d > 0 || pull > 0)) || (atBottom() && (d < 0 || pull < 0))) {
+    pull += d;
+    if ((atTop() && pull < 0) || (atBottom() && !atTop() && pull > 0)) { pull = 0; bounce.set(0); return; }
+    if (e.cancelable) e.preventDefault();
+    bounce.set(rubberband(pull, innerHeight, 0.45));
+  }
+}, { passive: false });
+const release = () => { touching = false; tStart = null; if (pull) { pull = 0; bounce.to(0, { damping: 0.8, response: 0.45 }); } };
+addEventListener("touchend", release, { passive: true }); addEventListener("touchcancel", release, { passive: true });
+// trackpad / mouse wheel at the edge
+let wheelPull = 0, wheelTimer = 0;
+addEventListener("wheel", e => {
+  lastInput = "wheel";
+  if (!MOTION || sheetIsOpen() || e.ctrlKey) return;
+  const d = -e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+  if ((atTop() && d > 0) || (atBottom() && d < 0)) {
+    wheelPull += d; bounce.set(rubberband(wheelPull, innerHeight, 0.18));
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(() => { wheelPull = 0; bounce.to(0, { damping: 0.78, response: 0.45 }); }, 90);
+  }
+}, { passive: true });
 
 // ---------- views ----------
 function backupBanner() {
@@ -658,7 +745,7 @@ function aStatistik(R) {
   placeThumb(false);
   document.querySelectorAll(".seg button").forEach(b => b.addEventListener("pointerdown", () => {
     if (statMode === b.dataset.mode) return;
-    statMode = b.dataset.mode; placeThumb(true); haptic(8);
+    statMode = b.dataset.mode; placeThumb(true); haptic(8); revealNext = true;
     setTimeout(render, reduced ? 0 : 180);
   }));
   const ys = $("#yearSel"); if (ys) ys.onchange = () => { statYear = ys.value; render(); };
