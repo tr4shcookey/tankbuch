@@ -1,5 +1,5 @@
 // Tankbuch offline cache. Bump VERSION to ship an update.
-const VERSION = "tankbuch-202611162311";
+const VERSION = "tankbuch-202611162324";
 const FILES = ["./", "index.html", "vendor/chart.umd.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k))))); self.clients.claim(); });

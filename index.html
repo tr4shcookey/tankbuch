@@ -271,6 +271,27 @@ form.entry { display: grid; gap: 16px }
 .toast { position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 10px); transform: translateX(-50%); z-index: 40; background: var(--bar); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); box-shadow: 0 8px 30px rgba(0,0,0,.16), 0 0 0 .5px var(--sep); padding: 10px 18px; border-radius: 999px; font-weight: 600; font-size: .9375rem; display: flex; gap: 8px; align-items: center; animation: drop .45s cubic-bezier(.3,.9,.3,1.1) both; max-width: calc(100% - 32px) }
 .toast svg { width: 18px; height: 18px; stroke: var(--good); fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; flex: none }
 @keyframes drop { from { opacity: 0; transform: translate(-50%, -24px) scale(.9) } to { opacity: 1; transform: translate(-50%, 0) } }
+/* Insights */
+.insight-lines p { margin: 10px 0 0; font-size: 1.0625rem; letter-spacing: -.01em; line-height: 1.4 }
+.save-tip { margin-top: 14px; background: color-mix(in srgb, var(--good) 13%, transparent); border-radius: 12px; padding: 10px 12px; font-size: .9375rem; letter-spacing: 0 }
+.seasons { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; margin-top: 14px }
+@media (min-width: 640px) { .seasons { grid-template-columns: repeat(4, minmax(0,1fr)) } }
+.season { background: var(--fill); border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; min-width: 0 }
+.season b { font-family: var(--f-round); font-size: 1.4rem; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.02em }
+.season small, .season .label { color: var(--muted); font-size: .8125rem; letter-spacing: 0 }
+.rec .ico { width: 38px; height: 38px; border-radius: 10px; background: var(--fill); display: grid; place-items: center; font-size: 1.2rem; justify-self: center }
+.rec .main .t { white-space: normal; line-height: 1.25 }
+.rec .right b { font-family: var(--f-round); font-size: 1.0625rem }
+div.fill { cursor: default }
+/* Favourite stations and price limit */
+.station .star { background: none; border: 0; padding: 2px 4px; font-size: 1.25rem; line-height: 1; color: var(--muted); cursor: pointer }
+.station .star[aria-pressed="true"] { color: var(--amber) }
+.station .star:active { transform: scale(.85) }
+.station .links { display: flex; gap: 8px; align-items: center }
+.station.under .lcd { color: #6BE39E; box-shadow: inset 0 0 0 2px #2FA866 }
+.station.under .lcd small { color: #6BE39E }
+.steps { margin: 8px 0 0; padding-left: 1.3em; font-size: .9375rem; letter-spacing: 0; display: grid; gap: 6px }
+.steps code { background: var(--fill); border-radius: 6px; padding: 1px 5px; font-size: .875rem }
 .empty { text-align: center; color: var(--muted); padding: 28px 12px }
 
 @media (prefers-reduced-motion: reduce) { .view, .toast { animation: fadein .2s ease both !important } .seg .thumb, .switch::after { transition-duration: .01s } }
@@ -494,7 +515,7 @@ function vUebersicht(R) {
   const dP = lastP && prevP ? lastP.preisProLiter - prevP.preisProLiter : null;
   const lastKm = list.filter(e => e.kmStand != null).at(-1);
   return `
-  <div class="card half quick"><div class="quick-head"><h2>Tanken</h2></div><div id="quickForm"></div></div>
+  <div class="card half quick"><div class="quick-head"><h2>Tanken</h2>${CAN_PASTE ? `<button class="link" type="button" id="qPaste">Einfügen</button>` : ""}</div><div id="quickForm"></div></div>
   <div class="half stack">
   <div class="pump" role="group" aria-label="Durchschnittsverbrauch">
     <div><div class="lbl">Ø Verbrauch · ${esc(car().name)}</div><span class="big">${cnt(R.avg, 2)}</span><span class="unit">l/100 km</span></div>
@@ -520,8 +541,37 @@ function vUebersicht(R) {
   <div class="section"><div class="section-head"><h2 class="section-title">Zuletzt getankt</h2><button class="link" data-go="verlauf">Alle</button></div>
     <div class="list">${list.slice(-3).reverse().map(e => fillRow(e, R.avg)).join("")}</div></div>`;
 }
+function parseShortcut(txt) {
+  const o = {}, n = s => { const v = parseNum(s); return v == null || Number.isNaN(v) ? null : v; };
+  for (const line of String(txt).split(/\r?\n|;/)) {
+    const m = line.match(/^\s*([^:=]+?)\s*[:=]\s*(.+?)\s*$/); if (!m) continue;
+    const k = m[1].toLowerCase(), v = m[2];
+    if (/^ort/.test(k)) o.ort = v;
+    else if (/gesamt|betrag|summe/.test(k)) o.preis = n(v);
+    else if (/preis|€|eur/.test(k)) o.ppl = n(v);
+    else if (/^(km|kilometer)/.test(k)) o.km = n(v);
+    else if (/^lit/.test(k)) o.liter = n(v);
+  }
+  if (o.liter == null && o.ppl == null && o.km == null) { // bare numbers: price has 3 decimals, odometer is large, the rest are liters
+    for (const s of String(txt).match(/\d[\d.,]*/g) || []) { const v = n(s); if (v == null) continue; if (v > 900) o.km = v; else if (v < 4) o.ppl = v; else if (o.liter == null) o.liter = v; }
+  }
+  if (o.ppl >= 100) o.ppl /= 1000;   // "1.759" written with a dot
+  return o;
+}
+function fillQuick(o) {
+  const set = (k, v, d) => { const el = $("#q-" + k); if (el && v != null) { el.value = typeof v === "number" ? (d == null ? String(v) : inputNum(v, d)) : v; el.dispatchEvent(new Event("input", { bubbles: true })); } };
+  set("liter", o.liter, 2); set("ppl", o.ppl, 3); set("preis", o.preis, 2); set("km", o.km != null ? Math.round(o.km) : null); set("ort", o.ort);
+}
 function aUebersicht(R) {
   formInto($("#quickForm"), "q", null);
+  if (pendingFill) { fillQuick(pendingFill); pendingFill = null; toast("Werte übernommen. Prüfen und sichern."); }
+  const qp = $("#qPaste"); if (qp) qp.onclick = async () => {
+    try {
+      const o = parseShortcut(await navigator.clipboard.readText());
+      if (o.liter == null && o.ppl == null && o.km == null && o.preis == null) return toast("In der Zwischenablage stehen keine Tankwerte", false);
+      fillQuick(o); haptic(10); toast("Eingefügt. Prüfen und sichern.");
+    } catch { toast("Einfügen nicht erlaubt", false); }
+  };
   if (!R.list.length) return;
   const acc = css("--accent"), am = css("--amber"), mu = css("--muted");
   const seg = R.seg.slice(-30), cv = $("#cV");
@@ -576,7 +626,9 @@ function vStatistik(R) {
   const { dated, years, rows, tot } = statRows(R);
   if (!dated.length) return `<div class="card empty">Noch keine Daten für eine Statistik.</div>`;
   const filled = rows.filter(r => r.s.n), undated = R.list.length - dated.length;
-  return `<div class="toolbar"><div class="seg" role="tablist" aria-label="Zeitraum"><span class="thumb" id="segThumb"></span><button role="tab" data-mode="monat" aria-selected="${statMode === "monat"}">Monate</button><button role="tab" data-mode="jahr" aria-selected="${statMode === "jahr"}">Jahre</button></div>
+  const segHtml = `<div class="seg" role="tablist" aria-label="Ansicht"><span class="thumb" id="segThumb"></span>${[["monat", "Monate"], ["jahr", "Jahre"], ["einblick", "Einblicke"]].map(([k, n]) => `<button role="tab" data-mode="${k}" aria-selected="${statMode === k}">${n}</button>`).join("")}</div>`;
+  if (statMode === "einblick") return `<div class="toolbar">${segHtml}</div>` + vEinblicke(R);
+  return `<div class="toolbar">${segHtml}
     ${statMode === "monat" ? `<select class="picker" id="yearSel" aria-label="Jahr wählen">${years.map(y => `<option${y === statYear ? " selected" : ""}>${y}</option>`).join("")}</select>` : ""}</div>
   <div class="kpis">
     <div class="kpi"><span class="label">Kosten</span><b>${cnt(tot.cost, 2)} €</b><small>${tot.n} Tankvorgänge</small></div>
@@ -610,6 +662,7 @@ function aStatistik(R) {
     setTimeout(render, reduced ? 0 : 180);
   }));
   const ys = $("#yearSel"); if (ys) ys.onchange = () => { statYear = ys.value; render(); };
+  if (statMode === "einblick") return aEinblicke(R);
   const { rows } = statRows(R);
   const acc = css("--accent"), am = css("--amber");
   const filled = rows.filter(r => r.s.n), avgCost = filled.length ? filled.reduce((a, r) => a + r.s.cost, 0) / filled.length : null;
@@ -626,6 +679,107 @@ function aStatistik(R) {
       scales: { x: { title: ax(unitX) }, y: { position: "left", title: ax("Verbrauch in l/100 km", acc), ticks: { color: acc, callback: v => fmt(v, 1) } },
         y1: { position: "right", grid: { display: false }, border: { display: false }, title: ax("Preis in €/l", am), ticks: { color: am, callback: v => fmt(v, 2) } } } } });
 }
+// ---------- insights: cheapest time, seasons, records ----------
+const WTAGE = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+const WT_LANG = { Mo: "montags", Di: "dienstags", Mi: "mittwochs", Do: "donnerstags", Fr: "freitags", Sa: "samstags", So: "sonntags" };
+const ZEITEN = [["Morgens", 5, 10, "5–10 Uhr"], ["Mittags", 10, 14, "10–14 Uhr"], ["Nachmittags", 14, 18, "14–18 Uhr"], ["Abends", 18, 22, "18–22 Uhr"], ["Nachts", 22, 29, "22–5 Uhr"]];
+const zeitSlot = t => { if (!t) return null; let h = +t.slice(0, 2); if (h < 5) h += 24; const z = ZEITEN.find(([, a, b]) => h >= a && h < b); return z ? z[0] : null; };
+const ct = v => (v > 0.05 ? "+" : v < -0.05 ? "−" : "±") + fmt(Math.abs(v), 1) + " ct";
+const SEASONS = [["Winter", [12, 1, 2], "Dez–Feb"], ["Frühling", [3, 4, 5], "Mär–Mai"], ["Sommer", [6, 7, 8], "Jun–Aug"], ["Herbst", [9, 10, 11], "Sep–Nov"]];
+function insights(R) {
+  // Every price is compared with the average of its own month, so general price trends (2022 was expensive) don't distort the result.
+  const pr = R.list.filter(e => e.preisProLiter != null && e.datum && e.datum.length === 10);
+  const dev = [];
+  for (const [, es] of groupBy(pr, e => e.datum.slice(0, 7))) {
+    if (es.length < 2) continue;
+    const m = es.reduce((a, e) => a + e.preisProLiter, 0) / es.length;
+    es.forEach(e => dev.push({ e, d: (e.preisProLiter - m) * 100 }));
+  }
+  const agg = (keyFn, keys) => { const g = groupBy(dev, x => keyFn(x.e)); return (keys || [...g.keys()]).map(k => { const xs = g.get(k) || []; return { k, n: xs.length, d: xs.length ? xs.reduce((a, x) => a + x.d, 0) / xs.length : null }; }); };
+  const wt = agg(e => WTAGE[new Date(e.datum + "T12:00").getDay()], [1, 2, 3, 4, 5, 6, 0].map(i => WTAGE[i]));
+  const zt = agg(e => zeitSlot(e.uhrzeit), ZEITEN.map(z => z[0]));
+  const orte = agg(e => e.ort).filter(o => o.n >= 3).sort((a, b) => a.d - b.d);
+  const ls = R.list.filter(e => e.liter), avgL = ls.length ? ls.reduce((a, e) => a + e.liter, 0) / ls.length : null;
+  // consumption per season: full-tank segments, assigned to the month of the fill-up that closes them
+  const seg = R.seg.filter(e => e.datum), month = e => +e.datum.slice(5, 7);
+  const vOf = es => { const km = es.reduce((a, e) => a + e._km, 0); return km ? es.reduce((a, e) => a + e._l, 0) / km * 100 : null; };
+  const seasons = SEASONS.map(([n, ms, r]) => { const es = seg.filter(e => ms.includes(month(e))); return { n, r, k: es.length, v: vOf(es) }; });
+  const months = MONATE.map((m, i) => { const es = seg.filter(e => month(e) === i + 1); return { m, k: es.length, v: vOf(es) }; });
+  const warmE = seg.filter(e => month(e) >= 4 && month(e) <= 9), coldE = seg.filter(e => month(e) < 4 || month(e) > 9);
+  return { dev, wt, zt, orte, avgL, seasons, months, warm: vOf(warmE), cold: vOf(coldE), nWarm: warmE.length, nCold: coldE.length };
+}
+const spread = xs => { const o = xs.filter(x => x.n >= 3 && x.d != null).sort((a, b) => a.d - b.d); return o.length >= 2 ? { lo: o[0], hi: o.at(-1) } : null; };
+function records(R) {
+  const L = R.list, pick = (arr, f, dir) => arr.length ? arr.reduce((a, e) => dir * f(e) > dir * f(a) ? e : a) : null;
+  const pr = L.filter(e => e.preisProLiter != null), gp = L.filter(e => e.gesamtpreis != null), li = L.filter(e => e.liter != null);
+  const rows = [
+    ["🌿", "Sparsamste Tankfüllung", pick(R.seg, e => e._v, -1), e => fmt(e._v, 2) + " l/100 km", "v-good"],
+    ["🔥", "Höchster Verbrauch", pick(R.seg, e => e._v, 1), e => fmt(e._v, 2) + " l/100 km", "v-bad"],
+    ["🛣️", "Weiteste Strecke mit einer Füllung", pick(R.seg, e => e._km, 1), e => fmt(e._km, 0) + " km", ""],
+    ["🏷️", "Günstigster Liter", pick(pr, e => e.preisProLiter, -1), e => fmt(e.preisProLiter, 3) + " €", "v-good"],
+    ["💸", "Teuerster Liter", pick(pr, e => e.preisProLiter, 1), e => fmt(e.preisProLiter, 3) + " €", "v-bad"],
+    ["🧾", "Teuerste Tankfüllung", pick(gp, e => e.gesamtpreis, 1), e => eur(e.gesamtpreis), ""],
+    ["⛽", "Meiste Liter auf einmal", pick(li, e => e.liter, 1), e => fmt(e.liter, 2) + " l", ""]
+  ].filter(r => r[2]);
+  const mon = [...groupBy(L.filter(e => e.datum), e => e.datum.slice(0, 7))].map(([k, es]) => ({ k, s: periodStats(es) })).filter(m => m.s.cost > 0);
+  const top = mon.length ? mon.reduce((a, m) => m.s.cost > a.s.cost ? m : a) : null;
+  const where = e => [dateLabel(e.datum), e.ort].filter(Boolean).map(esc).join(" · ");
+  return rows.map(([ico, t, e, val, cls]) => `<button class="fill rec" data-edit="${esc(e.id)}"><span class="ico" aria-hidden="true">${ico}</span>
+      <div class="main"><div class="t">${t}</div><div class="d">${where(e)}</div></div><div class="right"><b class="${cls}">${val(e)}</b></div></button>`).join("")
+    + (top ? `<div class="fill rec"><span class="ico" aria-hidden="true">📅</span><div class="main"><div class="t">Teuerster Monat</div><div class="d">${monthLabel(top.k)} · ${top.s.n} Tankvorgänge</div></div><div class="right"><b>${eur(top.s.cost)}</b></div></div>` : "");
+}
+function vEinblicke(R) {
+  const I = insights(R), sz = spread(I.zt), sw = spread(I.wt);
+  const devLegend = legend([{ t: "bar", c: "--good", label: "günstiger als der Monatsschnitt" }, { t: "bar", c: "--bad", label: "teurer" }]);
+  let cheap;
+  if (I.dev.length < 6) cheap = `<div class="card"><h2>Wann tankst du am günstigsten?</h2><p class="sub">Dafür brauche ich mehr Tankvorgänge mit Datum und Literpreis.</p></div>`;
+  else {
+    const lines = [];
+    if (sz) lines.push(`<b>${sz.lo.k}</b> tankst du im Schnitt am günstigsten (${ct(sz.lo.d)} pro Liter), <b>${sz.hi.k.toLowerCase()}</b> am teuersten (${ct(sz.hi.d)}).`);
+    if (sw) lines.push(`Bei den Wochentagen ist es <b>${WT_LANG[sw.lo.k]}</b> am günstigsten (${ct(sw.lo.d)}) und <b>${WT_LANG[sw.hi.k]}</b> am teuersten (${ct(sw.hi.d)}).`);
+    if (I.orte.length > 1) lines.push(`Von deinen Orten ist <b>${esc(I.orte[0].k)}</b> am günstigsten (${ct(I.orte[0].d)}).`);
+    const best = [sz, sw].filter(Boolean).sort((a, b) => (b.hi.d - b.lo.d) - (a.hi.d - a.lo.d))[0];
+    const euro = best && I.avgL ? (best.hi.d - best.lo.d) / 100 * I.avgL : null;
+    cheap = `<div class="card"><h2>Wann tankst du am günstigsten?</h2><p class="sub">Jeder Literpreis im Vergleich zum Durchschnitt seines Monats · ${I.dev.length} Tankvorgänge</p>
+      <div class="insight-lines">${lines.map(l => `<p>${l}</p>`).join("")}</div>
+      ${euro ? `<div class="save-tip">💡 Bei durchschnittlich ${fmt(I.avgL, 0)} Litern pro Tankfüllung macht das etwa <b>${eur(euro)}</b> pro Tankfüllung aus.</div>` : ""}</div>
+    <div class="card half"><h2>Nach Tageszeit</h2><p class="sub">Abweichung vom Monatsschnitt</p>${devLegend}<div class="chart-box"><canvas id="iZ" aria-label="Literpreis nach Tageszeit"></canvas></div></div>
+    <div class="card half"><h2>Nach Wochentag</h2><p class="sub">Abweichung vom Monatsschnitt</p>${devLegend}<div class="chart-box"><canvas id="iW" aria-label="Literpreis nach Wochentag"></canvas></div></div>
+    ${I.orte.length > 1 ? `<div class="card"><h2>Nach Ort</h2><p class="sub">Orte mit mindestens 3 Tankvorgängen</p>${devLegend}<div class="chart-box" style="height:${Math.max(160, I.orte.length * 34 + 60)}px"><canvas id="iO" aria-label="Literpreis nach Ort"></canvas></div></div>` : ""}`;
+  }
+  let season = "";
+  if (I.warm && I.cold) {
+    const pct = (I.cold - I.warm) / I.warm * 100;
+    season = `<div class="card half"><h2>Sommer gegen Winter</h2><p class="sub">Verbrauch nach Jahreszeit, alle Jahre zusammen</p>
+      <div class="insight-lines"><p>In der kalten Jahreszeit (Okt–Mär) verbrauchst du <b>${fmt(Math.abs(pct), 0)} % ${pct >= 0 ? "mehr" : "weniger"}</b> als in der warmen (Apr–Sep): ${fmt(I.cold, 2)} statt ${fmt(I.warm, 2)} l/100 km.</p></div>
+      <div class="seasons">${I.seasons.map(s => `<div class="season"><span class="label">${s.n} · ${s.r}</span><b class="${s.v ? "v-" + pillClass(s.v, R.avg) : ""}">${cnt(s.v, 2)}</b><small>l/100 km · ${s.k} Füllungen</small></div>`).join("")}</div></div>
+    <div class="card half"><h2>Verbrauch je Kalendermonat</h2><p class="sub">Alle Jahre zusammengefasst</p>
+      ${legend([{ scale: ["good", "ok", "warn", "bad"] }, { t: "dash", c: "--amber", label: "Durchschnitt", v: fmt(R.avg, 2) + " l" }])}<div class="chart-box"><canvas id="iM" aria-label="Verbrauch je Kalendermonat"></canvas></div></div>`;
+  }
+  return cheap + season + `<div class="section"><div class="section-head"><h2 class="section-title">Rekorde · ${esc(car().name)}</h2></div><div class="list">${records(R)}</div></div>
+    <p class="footnote">Gruppen mit weniger als 3 Tankvorgängen sind blass dargestellt und zählen nicht für „am günstigsten“. Tippe auf einen Rekord, um den Eintrag zu öffnen.</p>`;
+}
+function aEinblicke(R) {
+  const I = insights(R), g = css("--good"), b = css("--bad"), mu = css("--muted"), acc = css("--accent"), am = css("--amber");
+  const col = x => x.d == null ? mu : toRgba(x.d < 0 ? g : b, x.n >= 3 ? 1 : .35);
+  const tip = xs => ({ callbacks: { label: c => { const x = xs[c.dataIndex]; return x.d == null ? "keine Daten" : ct(x.d) + " pro Liter · " + x.n + " Tankvorgänge"; } } });
+  const devChart = (id, xs, labels, xTitle, horizontal) => {
+    const el = $(id); if (!el) return;
+    const valAx = { title: ax("Abweichung in ct/l"), ticks: { callback: v => fmt(v, Number.isInteger(v) ? 0 : 1) }, grid: { display: true, color: c => c.tick.value === 0 ? mu : css("--sep") } };
+    const catAx = { title: ax(xTitle), grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0 } };
+    chart(el, { type: "bar", data: { labels, datasets: [{ data: xs.map(x => x.d == null ? null : +x.d.toFixed(2)), backgroundColor: xs.map(col), borderRadius: 6, borderSkipped: false, maxBarThickness: 34 }] },
+      options: { indexAxis: horizontal ? "y" : "x", plugins: { legend: { display: false }, tooltip: tip(xs) }, scales: horizontal ? { x: valAx, y: catAx } : { x: catAx, y: valAx } } });
+  };
+  devChart("#iZ", I.zt, ZEITEN.map(z => [z[0], z[3]]), "Tageszeit");
+  devChart("#iW", I.wt, I.wt.map(x => x.k), "Wochentag");
+  devChart("#iO", I.orte, I.orte.map(x => x.k), "Ort", true);
+  const im = $("#iM");
+  if (im) chart(im, { type: "bar", data: { labels: MONATE, datasets: [
+      { label: "Verbrauch", data: I.months.map(m => m.v ? +m.v.toFixed(2) : null), backgroundColor: I.months.map(m => css(CLASS_VAR[pillClass(m.v, R.avg)])), borderRadius: 6, borderSkipped: false, maxBarThickness: 30, order: 2 },
+      { type: "line", label: "Durchschnitt", data: MONATE.map(() => R.avg && +R.avg.toFixed(2)), borderColor: am, borderDash: [6, 5], borderWidth: 2, pointRadius: 0, order: 1 } ] },
+    options: { plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.datasetIndex ? "Durchschnitt: " + fmt(c.parsed.y, 2) + " l/100 km" : "Verbrauch: " + fmt(c.parsed.y, 2) + " l/100 km · " + I.months[c.dataIndex].k + " Füllungen" } } },
+      scales: { x: { title: ax("Kalendermonat"), grid: { display: false } }, y: { beginAtZero: false, title: ax("Verbrauch in l/100 km", acc), ticks: { callback: v => fmt(v, 1) } } } } });
+}
 function vMehr() {
   const last = S.letzteSicherung ? new Date(S.letzteSicherung).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" }) : "noch nie";
   const hints = S.eintraege.filter(e => e.fahrzeug === car().id && e.hinweis).length;
@@ -636,6 +790,23 @@ function vMehr() {
     <div class="btn-row" style="margin-top:12px"><button class="btn" id="bkSave">Sicherung speichern</button><button class="btn tinted" id="bkLoad">Sicherung laden</button><input type="file" id="bkFile" accept=".json,application/json" hidden></div>
     <div id="bkFallback"></div>
     ${storageOk ? "" : `<p class="hint" style="margin-top:10px">⚠︎ Dieser Browser speichert gerade nicht dauerhaft. Bitte sichere deine Daten.</p>`}
+  </div></div>
+  <div class="section"><div class="group-head">Export</div><div class="card">
+    <p>Alle Tankvorgänge aller Fahrzeuge als Tabelle (CSV) mit Verbrauch je Füllung. Öffnet sich in Excel und Numbers.</p>
+    <button class="btn tinted" id="csvSave">Als Tabelle exportieren</button>
+  </div></div>
+  <div class="section"><div class="group-head">Siri-Kurzbefehl „Getankt“</div><div class="card">
+    <p>Sag an der Zapfsäule <b>„Hey Siri, Getankt“</b> und nenne Liter, Preis und Kilometerstand. Danach öffnest du das Tankbuch und tippst über dem Formular auf <b>Einfügen</b>.</p>
+    <details class="when"><summary><span>Einrichten</span><span class="muted">einmalig, 2 Minuten</span></summary>
+    <ol class="steps">
+      <li>Öffne die App <b>Kurzbefehle</b> und tippe auf <b>+</b>.</li>
+      <li>Füge dreimal die Aktion <b>„Nach Eingabe fragen“</b> hinzu, Eingabetyp <b>Zahl</b>, mit den Fragen <code>Wie viele Liter?</code>, <code>Preis pro Liter?</code> und <code>Kilometerstand?</code></li>
+      <li>Füge die Aktion <b>„Text“</b> hinzu und schreibe drei Zeilen. Setze hinter jeden Doppelpunkt die passende <b>Angegebene Eingabe</b> (aus der Leiste über der Tastatur):<br><code>Liter: …</code><br><code>Preis: …</code><br><code>Km: …</code></li>
+      <li>Füge die Aktion <b>„In Zwischenablage kopieren“</b> hinzu.</li>
+      <li>Nenne den Kurzbefehl oben <b>Getankt</b> und tippe auf <b>Fertig</b>.</li>
+    </ol>
+    <p class="muted" style="margin-top:10px;font-size:.875rem">Warum der Umweg über „Einfügen“? Siri kann eine Web-App nicht direkt öffnen und ihr keine Werte übergeben. Eine echte iPhone-App könnte das.</p>
+    </details>
   </div></div>
   <div class="section"><div class="group-head">Fahrzeuge</div><div class="card" style="padding-block:6px">
     <div class="settings-list">${S.fahrzeuge.map(f => `<div class="car-row"><input id="car-${esc(f.id)}" value="${esc(f.name)}" aria-label="Name von ${esc(f.name)}"><button class="btn tinted" data-rename="${esc(f.id)}">Umbenennen</button></div>`).join("")}
@@ -650,28 +821,44 @@ function vMehr() {
     ${confirmReset ? `<div class="confirm"><p style="margin:0">${HAS_SEED ? "Alle Daten auf den Stand deiner Excel-Tabelle zurücksetzen? Neue Einträge gehen verloren." : "Alle Tankvorgänge auf diesem Gerät löschen? Das lässt sich nur mit einer Sicherung rückgängig machen."}</p><div class="btn-row"><button class="btn destructive" id="resetYes">Zurücksetzen</button><button class="btn tinted" id="resetNo">Abbrechen</button></div></div>` : `<button class="btn destructive block" id="reset">${HAS_SEED ? "Auf Excel-Daten zurücksetzen" : "Alle Daten löschen"}</button>`}
   </div>`;
 }
+async function saveFile(name, data, type) {   // "ok" | "cancel" | "fallback" | "error"
+  let dl = null;
+  try { dl = window.claude ? await window.claude.use("downloads") : null; } catch {}
+  if (dl) {
+    try { await dl.save({ filename: name, data }); return "ok"; }
+    catch (err) { if (err && err.code === "declined") return "cancel"; }
+  }
+  try { // iPhone: share sheet -> "In Dateien sichern" -> iCloud Drive
+    const file = new File([data], name, { type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return "ok"; }
+  } catch (err) { if (err && err.name === "AbortError") return "cancel"; }
+  try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([data], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); return "fallback"; }
+  catch { return "error"; }
+}
+function toCsv() {
+  const num = (v, d) => v == null ? "" : String(+v.toFixed(d)).replace(".", ",");
+  const q = s => /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  const rows = [["Fahrzeug", "Datum", "Uhrzeit", "Ort", "Liter", "Preis pro Liter (€)", "Gesamtpreis (€)", "Kilometerstand", "Vollgetankt", "Strecke (km)", "Verbrauch (l/100 km)", "Hinweis"]];
+  for (const f of S.fahrzeuge) for (const e of compute(f.id).list)
+    rows.push([f.name, e.datum ? (e.datum.length === 10 ? dateLabel(e.datum) : e.datum.slice(5, 7) + "." + e.datum.slice(0, 4)) : "", e.uhrzeit || "", e.ort || "", num(e.liter, 2), num(e.preisProLiter, 3), num(e.gesamtpreis, 2), e.kmStand ?? "", e.vollgetankt === false ? "nein" : "ja", e._km != null ? num(e._km, 0) : "", e._v != null ? num(e._v, 2) : "", e.hinweis || ""]);
+  compute(car().id);
+  return "\ufeff" + rows.map(r => r.map(x => q(String(x))).join(";")).join("\r\n");
+}
 function aMehr() {
   const payload = () => JSON.stringify({ app: "Tankbuch", version: 1, gespeichert: new Date().toISOString(), daten: { fahrzeuge: S.fahrzeuge, aktiv: S.aktiv, eintraege: S.eintraege } }, (k, v) => k.startsWith("_") ? undefined : v, 1);
   $("#bkSave").onclick = async () => {
     const name = "Tankbuch-Sicherung-" + today() + ".json", data = payload();
-    let dl = null;
-    try { dl = window.claude ? await window.claude.use("downloads") : null; } catch {}
-    if (dl) {
-      try { await dl.save({ filename: name, data }); S.letzteSicherung = new Date().toISOString(); save(); toast("Sicherung gespeichert"); render(); return; }
-      catch (err) { if (err && err.code === "declined") return toast("Sicherung abgebrochen", false); }
-    }
-    try { // iPhone: share sheet -> "In Dateien sichern" -> iCloud Drive
-      const file = new File([data], name, { type: "application/json" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file] });
-        S.letzteSicherung = new Date().toISOString(); save(); toast("Sicherung gespeichert"); render(); return;
-      }
-    } catch (err) { if (err && err.name === "AbortError") return toast("Sicherung abgebrochen", false); }
-    try {
-      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([data], { type: "application/json" })); a.download = name; document.body.appendChild(a); a.click(); a.remove();
-      S.letzteSicherung = new Date().toISOString(); save();
-      $("#bkFallback").innerHTML = `<p class="muted" style="margin-top:10px;font-size:.875rem">Kein Speichern-Fenster erschienen? Kopiere den Text und speichere ihn als .json-Datei.</p><textarea readonly style="width:100%;height:110px;font-size:.75rem;border-radius:10px;border:0;background:var(--fill);padding:8px">${esc(data)}</textarea>`;
-    } catch { toast("Speichern hat nicht geklappt", false); }
+    const r = await saveFile(name, data, "application/json");
+    if (r === "cancel") return toast("Sicherung abgebrochen", false);
+    if (r === "error") return toast("Speichern hat nicht geklappt", false);
+    S.letzteSicherung = new Date().toISOString(); save();
+    if (r === "ok") { toast("Sicherung gespeichert"); render(); return; }
+    $("#bkFallback").innerHTML = `<p class="muted" style="margin-top:10px;font-size:.875rem">Kein Speichern-Fenster erschienen? Kopiere den Text und speichere ihn als .json-Datei.</p><textarea readonly style="width:100%;height:110px;font-size:.75rem;border-radius:10px;border:0;background:var(--fill);padding:8px">${esc(data)}</textarea>`;
+  };
+  $("#csvSave").onclick = async () => {
+    const r = await saveFile("Tankbuch-" + today() + ".csv", toCsv(), "text/csv");
+    if (r === "cancel") return toast("Export abgebrochen", false);
+    toast(r === "error" ? "Export hat nicht geklappt" : "Tabelle exportiert", r !== "error");
   };
   $("#bkLoad").onclick = () => $("#bkFile").click();
   $("#bkFile").onchange = async ev => {
@@ -848,9 +1035,36 @@ function wireForm(p, R, old) {
 const TK = "tankbuch.tk";
 const SORTEN = { e5: "Super E5", e10: "Super E10", diesel: "Diesel" };
 let prefill = null;
+const CAN_PASTE = !!(navigator.clipboard && navigator.clipboard.readText);
+// values passed in the address, e.g. ?liter=35,2&preis=1,759&km=54321&ort=Jena
+let pendingFill = (() => {
+  try {
+    const q = new URLSearchParams(location.search); if (![...q.keys()].some(k => /^(liter|preis|ppl|km|ort|gesamt)$/.test(k))) return null;
+    const o = parseShortcut([...q].map(([k, v]) => (k === "ppl" ? "preis" : k) + ": " + v).join("\n"));
+    history.replaceState(null, "", location.pathname);
+    return o;
+  } catch { return null; }
+})();
 const titleCase = x => String(x).toLowerCase().replace(/(^|[\s\-\/(.])(\p{L})/gu, (m, a, c) => a + c.toUpperCase());
-let P = { loading: false, error: null, stations: null, ts: 0, sorte: null };
-function tkGet() { try { return Object.assign({ apikey: "", sorte: "e5", radius: 5, lat: null, lng: null }, JSON.parse(localStorage.getItem(TK) || "{}")); } catch { return { apikey: "", sorte: "e5", radius: 5 }; } }
+let P = { loading: false, error: null, stations: null, ts: 0, sorte: null, fav: null, rows: {} };
+function stationRow(st, key, min, cfg) {
+  P.rows[key] = st;
+  const name = (st.brand || st.name || "Tankstelle").trim();
+  const addr = [st.street && (st.street + (st.houseNumber ? " " + String(st.houseNumber).trim() : "")), st.place].filter(Boolean).map(titleCase).join(", ");
+  const isFav = cfg.favs.some(f => f.id === st.id), under = st.price != null && cfg.grenze && st.price <= cfg.grenze;
+  const tag = st.price == null ? (st.isOpen === false ? "geschlossen" : "kein Preis") : under ? "unter Grenze" : min == null ? "" : st.price <= min ? "günstigste" : "+" + fmt((st.price - min) * 100, 0) + " ct";
+  return `<div class="station${under ? " under" : ""}"><div class="lcd">${st.price != null ? ppl(st.price) : "–"}<small>${tag || "&nbsp;"}</small></div>
+    <div class="main"><div class="t">${esc(name)}</div><div class="d">${esc(addr)}</div><div class="d">${st.dist != null ? fmt(st.dist, 1) + " km" : "gemerkt"}${st.isOpen === false && st.price != null ? " · geschlossen" : ""}</div></div>
+    <div class="acts">${st.price != null ? `<button class="btn" data-tank="${key}">Hier tanken</button>` : ""}<div class="links"><a class="maplink" href="https://maps.apple.com/?daddr=${st.lat},${st.lng}" target="_blank" rel="noopener">Route</a><button class="star" data-fav="${key}" aria-pressed="${isFav}" aria-label="${isFav ? "Aus Lieblingstankstellen entfernen" : "Als Lieblingstankstelle merken"}">${isFav ? "★" : "☆"}</button></div></div></div>`;
+}
+function tkGet() { try { return Object.assign({ apikey: "", sorte: "e5", radius: 5, lat: null, lng: null, favs: [], grenze: null }, JSON.parse(localStorage.getItem(TK) || "{}")); } catch { return { apikey: "", sorte: "e5", radius: 5, favs: [], grenze: null }; } }
+async function loadFavs(cfg) {   // prices.php: up to 10 station ids, all fuel types at once
+  if (!cfg.favs.length) { P.fav = null; return; }
+  try {
+    const r = await fetch(`https://creativecommons.tankerkoenig.de/json/prices.php?ids=${cfg.favs.slice(0, 10).map(f => encodeURIComponent(f.id)).join(",")}&apikey=${encodeURIComponent(cfg.apikey)}`);
+    const j = await r.json(); P.fav = j.ok ? (j.prices || {}) : null;
+  } catch { P.fav = null; }
+}
 function tkSet(o) { try { localStorage.setItem(TK, JSON.stringify(Object.assign(tkGet(), o))); } catch {} }
 function locate() {
   return new Promise((res, rej) => {
@@ -863,6 +1077,7 @@ async function loadPrices(force) {
   if (!cfg.apikey || P.loading) return;
   if (!force && P.stations && P.sorte === cfg.sorte && Date.now() - P.ts < 5 * 60e3) return;   // Tankerkönig: max. alle 5 Minuten
   P.loading = true; P.error = null; if (view === "preise") render();
+  const favP = loadFavs(cfg);
   try {
     let pos;
     try { pos = await locate(); tkSet({ lat: pos.lat, lng: pos.lng }); }
@@ -875,6 +1090,7 @@ async function loadPrices(force) {
   } catch (err) {
     P.error = err && err.message && !/Failed to fetch|NetworkError|Load failed/i.test(err.message) ? err.message : "Keine Verbindung zu Tankerkönig. Bist du online?";
   }
+  await favP;
   P.loading = false; if (view === "preise") render();
 }
 function vPreise(R) {
@@ -884,6 +1100,7 @@ function vPreise(R) {
     ${cfg.apikey ? "" : `<p class="sub" style="margin-bottom:12px">Die Preise kommen kostenlos von Tankerkönig. Dafür brauchst du einen eigenen Schlüssel: Auf <a href="https://creativecommons.tankerkoenig.de/" target="_blank" rel="noopener" style="color:var(--accent)">creativecommons.tankerkoenig.de</a> oben auf „API-KEY“ tippen, Formular ausfüllen und den Schlüssel aus der E-Mail hier einfügen.</p>`}
     <div style="display:grid;gap:12px">
       <div class="field-row"><label class="label" for="tk-key">API-Schlüssel</label><input id="tk-key" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value="${esc(cfg.apikey)}"></div>
+      <div class="field-row"><label class="label" for="tk-grenze">Preisgrenze in €/l (freiwillig)</label><input id="tk-grenze" inputmode="decimal" placeholder="z. B. 1,699" value="${cfg.grenze ? inputNum(cfg.grenze, 3) : ""}"></div>
       <div class="field-row"><label class="label" for="tk-rad">Umkreis</label><select id="tk-rad">${[2, 5, 10, 15, 25].map(r => `<option value="${r}"${+cfg.radius === r ? " selected" : ""}>${r} km</option>`).join("")}</select></div>
       <button class="btn" id="tk-save">Speichern</button>
     </div></div>`;
@@ -896,19 +1113,20 @@ function vPreise(R) {
   else if (P.stations && !P.stations.length) body = `<div class="card empty">Keine geöffnete Tankstelle mit ${SORTEN[cfg.sorte]} im Umkreis von ${cfg.radius} km.</div>`;
   else if (P.stations) {
     const min = P.stations[0].price;
-    body = `<div class="list">${P.stations.slice(0, 25).map((st, i) => {
-      const name = (st.brand || st.name || "Tankstelle").trim();
-      const addr = [st.street && (st.street + (st.houseNumber ? " " + st.houseNumber.trim() : "")), st.place].filter(Boolean).map(titleCase).join(", ");
-      const diff = st.price - min;
-      return `<div class="station"><div class="lcd">${ppl(st.price)}<small>${i === 0 ? "günstigste" : "+" + fmt(diff * 100, 0) + " ct"}</small></div>
-        <div class="main"><div class="t">${esc(name)}</div><div class="d">${esc(addr)}</div><div class="d">${fmt(st.dist, 1)} km${st.isOpen === false ? " · geschlossen" : ""}</div></div>
-        <div class="acts"><button class="btn" data-tank="${i}">Hier tanken</button><a class="maplink" href="https://maps.apple.com/?daddr=${st.lat},${st.lng}" target="_blank" rel="noopener">Route</a></div></div>`;
-    }).join("")}</div>`;
+    body = `<div class="section-head"><h2 class="section-title">In der Nähe</h2></div><div class="list">${P.stations.slice(0, 25).map((st, i) => stationRow(st, "n" + i, min, cfg)).join("")}</div>`;
+    const nUnder = cfg.grenze ? P.stations.filter(s => s.price <= cfg.grenze).length : 0;
+    if (cfg.grenze) body = `<div class="banner"><p>${nUnder ? `<b>${nUnder} Tankstelle${nUnder > 1 ? "n" : ""}</b> in der Nähe ${nUnder > 1 ? "liegen" : "liegt"} unter deiner Preisgrenze von <b>${ppl(cfg.grenze)} €</b>. ${nUnder > 1 ? "Sie sind" : "Sie ist"} grün markiert.` : `Gerade liegt keine Tankstelle in der Nähe unter deiner Preisgrenze von <b>${ppl(cfg.grenze)} €</b>.`}</p></div>` + body;
     if (myLast) {
       const d = (min - myLast.preisProLiter) * 100;
       body = `<div class="banner"><p>Günstigste ${SORTEN[cfg.sorte]} in der Nähe: <b>${ppl(min)} €</b>. Das sind <b>${fmt(Math.abs(d), 0)} ct ${d < 0 ? "weniger" : "mehr"}</b> als bei deinem letzten Tanken (${ppl(myLast.preisProLiter)} €).</p></div>` + body;
     }
   } else body = `<div class="card empty">Tippe auf „Aktualisieren“.</div>`;
+  if (cfg.favs.length) {
+    const min = P.stations && P.stations.length ? P.stations[0].price : null;
+    const favRows = cfg.favs.map((f, i) => { const p = P.fav && P.fav[f.id]; const price = p && p.status === "open" && typeof p[cfg.sorte] === "number" ? p[cfg.sorte] : null;
+      return stationRow({ ...f, dist: null, price, isOpen: p ? p.status === "open" : null }, "f" + i, min, cfg); }).join("");
+    body = `<div class="section"><div class="section-head"><h2 class="section-title">Meine Tankstellen</h2></div><div class="list">${favRows}</div></div>` + body;
+  } else if (P.stations && P.stations.length) body += `<p class="footnote">Tippe auf ☆, um eine Tankstelle als Lieblingstankstelle zu merken. Sie steht dann immer oben, auch wenn du gerade woanders bist.</p>`;
   const when = P.ts ? new Date(P.ts).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : null;
   return `<div class="toolbar">${seg}<button class="btn tinted" id="tk-refresh"${P.loading ? " disabled" : ""}>${P.loading ? "Lädt …" : "Aktualisieren"}</button></div>
     <p class="footnote" style="margin-top:-8px">${when ? "Stand " + when + " Uhr · " : ""}Umkreis ${cfg.radius} km · nach Preis sortiert</p>
@@ -918,14 +1136,23 @@ function vPreise(R) {
 }
 function aPreise() {
   const save = $("#tk-save");
-  if (save) save.onclick = () => { const k = $("#tk-key").value.trim(); tkSet({ apikey: k, radius: +$("#tk-rad").value }); P.stations = null; P.ts = 0; toast(k ? "Gespeichert" : "Schlüssel entfernt"); render(); loadPrices(true); };
+  if (save) save.onclick = () => { const k = $("#tk-key").value.trim(), gz = parseNum($("#tk-grenze").value); tkSet({ apikey: k, radius: +$("#tk-rad").value, grenze: gz > 0 ? (gz >= 100 ? gz / 1000 : gz) : null }); P.stations = null; P.ts = 0; toast(k ? "Gespeichert" : "Schlüssel entfernt"); render(); loadPrices(true); };
   document.querySelectorAll("[data-sorte]").forEach(b => b.onclick = () => { tkSet({ sorte: b.dataset.sorte }); haptic(8); P.stations = null; render(); loadPrices(true); });
   const rf = $("#tk-refresh"); if (rf) rf.onclick = () => loadPrices(true);
   document.querySelectorAll("[data-tank]").forEach(b => b.onclick = () => {
-    const st = P.stations[+b.dataset.tank];
+    const st = P.rows[b.dataset.tank];
     const place = st.place ? titleCase(st.place) : "";
     prefill = { ppl: st.price, ort: [ (st.brand || "").trim(), place ].filter(Boolean).join(" ") };
     haptic(10); go("uebersicht");
+  });
+  document.querySelectorAll("[data-fav]").forEach(b => b.onclick = () => {
+    const st = P.rows[b.dataset.fav], cfg = tkGet(); haptic(10);
+    if (cfg.favs.some(f => f.id === st.id)) { tkSet({ favs: cfg.favs.filter(f => f.id !== st.id) }); toast("Entfernt"); render(); return; }
+    if (cfg.favs.length >= 10) return toast("Höchstens 10 Lieblingstankstellen", false);
+    const f = { id: st.id, brand: st.brand, name: st.name, street: st.street, houseNumber: st.houseNumber, place: st.place, lat: st.lat, lng: st.lng };
+    tkSet({ favs: [...cfg.favs, f] });
+    P.fav = P.fav || {}; P.fav[st.id] = { status: st.isOpen === false ? "closed" : "open", [cfg.sorte]: st.price };
+    toast("Als Lieblingstankstelle gemerkt"); render();
   });
   if (STANDALONE && tkGet().apikey) loadPrices(false);
 }
